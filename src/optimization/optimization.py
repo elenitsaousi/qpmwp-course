@@ -25,12 +25,12 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(project_root)  # Add src/ to Python path
 
 # Local modules
-from helper_functions import to_numpy
-from estimation.covariance import Covariance
-from estimation.expected_return import ExpectedReturn
-from optimization.optimization_data import OptimizationData
-from optimization.constraints import Constraints
-from optimization.quadratic_program import QuadraticProgram
+from src.helper_functions import to_numpy
+from src.estimation.covariance import Covariance
+from src.estimation.expected_return import ExpectedReturn
+from src.optimization.optimization_data import OptimizationData
+from src.optimization.constraints import Constraints
+from src.optimization.quadratic_program import QuadraticProgram
 
 
 
@@ -128,8 +128,6 @@ class Optimization(ABC):
         # TODO:
         # Check consistency of constraints
         # self.check_constraints()
-        # Check consistency of constraints
-        self.check_constraints()
         
 
         # Get the coefficients of the objective function

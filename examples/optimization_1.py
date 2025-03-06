@@ -171,6 +171,7 @@ weights_mv = {col: float(solution.x[i]) for i, col in enumerate(X.columns)}
 weights_mv
 weights_mv = pd.Series(weights_mv)
 weights_mv.plot(kind='bar')
+plt.show()
 
 
 
@@ -204,6 +205,7 @@ weights_minv = {col: float(solution.x[i]) for i, col in enumerate(X.columns)}
 weights_minv = pd.Series(weights_minv)
 
 weights_minv.plot(kind='bar')
+plt.show()
 
 
 
@@ -255,7 +257,7 @@ weights_df.index.name = 'risk_aversion'
 
 weights_df
 weights_df.T.plot(legend=False, kind='bar', cmap='viridis')
-
+plt.show()
 
 
 # Plot the efficient frontier
@@ -264,6 +266,12 @@ portf_vola = np.diag(weights_df @ covmat @ weights_df.T)
 portf_return = weights_df @ mu
 
 plt.scatter(portf_vola, portf_return, c=portf_return / portf_vola, cmap='viridis')
+
+plt.xlabel("Portfolio Volatility")
+plt.ylabel("Expected Return")
+plt.title("Efficient Frontier")
+plt.colorbar(label="Sharpe Ratio")
+plt.show()
 
 
 
@@ -281,6 +289,9 @@ np.log((1 + X.mean(axis=1)).cumprod()).plot(label='Equally Weighted Portfolio')
 
 # Add the minimum-variance portfolio
 np.log((1 + X @ weights_minv).cumprod()).plot(label='Minimum-Variance Portfolio')
+plt.legend()
+plt.title("Cumulative Log Returns of Portfolios")
+plt.show()
 
 
 
@@ -339,7 +350,7 @@ solution = qpsolvers.solve_problem(
 # Extract weights
 weights_ls = pd.Series(solution.x, X.columns)
 weights_ls.plot(kind='bar')
-
+plt.show()
 
 
 # Inspect portfolio simulations
@@ -355,5 +366,5 @@ sim = pd.concat({
 sim
 
 np.log((1 + sim).cumprod()).plot()
-
+plt.show()
 

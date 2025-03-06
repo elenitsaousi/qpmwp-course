@@ -31,13 +31,13 @@ sys.path.append(project_root)
 sys.path.append(src_path)
 
 # Local modules imports
-from helper_functions import load_data_msci
-from estimation.covariance import Covariance
-from estimation.expected_return import ExpectedReturn
-from optimization.constraints import Constraints
-from optimization.quadratic_program import QuadraticProgram
-from optimization.optimization_data import OptimizationData
-from optimization.optimization import MeanVariance
+from src.helper_functions import load_data_msci
+from src.estimation.covariance import Covariance
+from src.estimation.expected_return import ExpectedReturn
+from src.optimization.constraints import Constraints
+from src.optimization.quadratic_program import QuadraticProgram
+from src.optimization.optimization_data import OptimizationData
+from src.optimization.optimization import MeanVariance
 
 
 
@@ -192,7 +192,7 @@ weights_mv
 # (Lecture 3)
 # --------------------------------------------------------------------------
 
-from optimization.optimization import LeastSquares
+from src.optimization.optimization import LeastSquares
 
 
 # Instantiate the optimization object
@@ -237,6 +237,3 @@ sim['benchmark'] = data['bm_series']
 sim.dropna(how='all', inplace=True)
 
 np.log((1 + sim).cumprod()).plot()
-
-
-

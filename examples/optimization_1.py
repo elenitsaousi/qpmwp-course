@@ -299,12 +299,12 @@ np.log((1 + X @ weights_minv).cumprod()).plot(label='Minimum-Variance Portfolio'
 
 
 
-# # Load msci world index return series
-# y = pd.read_csv(f'{path_to_data}NDDLWI.csv',
-#                 index_col=0,
-#                 header=0,
-#                 parse_dates=True,
-#                 date_format='%d-%m-%Y')
+# Load msci world index return series
+y = pd.read_csv(f'{path_to_data}NDDLWI.csv',
+               index_col=0,
+                header=0,
+                parse_dates=True,
+                date_format='%d-%m-%Y')
 
 # Create an equally weighted benchmark series
 y = X.mean(axis=1)

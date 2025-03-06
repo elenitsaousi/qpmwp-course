@@ -9,7 +9,6 @@
 # --------------------------------------------------------------------------
 
 
-
 # Standard library imports
 from abc import ABC, abstractmethod
 from typing import Optional, Union
@@ -17,6 +16,13 @@ from typing import Optional, Union
 # Third party imports
 import numpy as np
 import pandas as pd
+
+import os
+import sys
+
+# Automatically detect the project root
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+sys.path.append(project_root)  # Add src/ to Python path
 
 # Local modules
 from helper_functions import to_numpy
@@ -38,6 +44,7 @@ from optimization.quadratic_program import QuadraticProgram
 #    [ ] MaxSharpe
 #    [ ] MaxUtility
 #    [ ] RiskParity
+
 
 
 
@@ -72,6 +79,7 @@ class Objective():
 
 
 
+
 class OptimizationParameter(dict):
 
     '''
@@ -88,7 +96,6 @@ class OptimizationParameter(dict):
         self.update(kwargs)
 
 
-
 class Optimization(ABC):
 
     '''
@@ -101,11 +108,11 @@ class Optimization(ABC):
 
     def __init__(self,
                  params: Optional[OptimizationParameter] = None,
-                 constraints: Constraints = Constraints(),
+                 constraints: Optional[Constraints] = None,
                  **kwargs):
         self.params = OptimizationParameter() if params is None else params
         self.params.update(**kwargs)
-        self.constraints = constraints
+        self.constraints = Constraints() if constraints is None else constraints
         self.objective: Objective = Objective()
         self.results = {}
 
@@ -121,6 +128,9 @@ class Optimization(ABC):
         # TODO:
         # Check consistency of constraints
         # self.check_constraints()
+        # Check consistency of constraints
+        self.check_constraints()
+        
 
         # Get the coefficients of the objective function
         obj_coeff = self.objective.coefficients
@@ -176,6 +186,24 @@ class Optimization(ABC):
         # [ ] Add turnover penalty in the objective
         # [ ] Add turnover constraint
         # [ ] Add leverage constraint
+        # Add turnover penalty in the objective
+        turnover_penalty = self.params.get('turnover_penalty', 0)
+        if turnover_penalty > 0:
+            P_turnover = np.eye(len(self.objective.coefficients['q'])) * turnover_penalty
+            self.objective.coefficients['P'] += P_turnover
+        
+        # Add turnover constraint
+        max_turnover = self.params.get('max_turnover')
+        if max_turnover is not None:
+            turnover_constraint = np.eye(len(self.objective.coefficients['q']))
+            self.model.add_constraint(turnover_constraint, '<=', max_turnover)
+        
+        # Add leverage constraint
+        max_leverage = self.params.get('max_leverage')
+        if max_leverage is not None:
+            leverage_constraint = np.ones((1, len(self.objective.coefficients['q'])))
+            self.model.add_constraint(leverage_constraint, '<=', max_leverage)
+
 
         return None
 
@@ -186,9 +214,13 @@ class Optimization(ABC):
 class LeastSquares(Optimization):
 
     def __init__(self,
+                 constraints: Optional[Constraints] = None,
                  covariance: Optional[Covariance] = None,
                  **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(
+            constraints=constraints,
+            **kwargs
+        )
         self.covariance = covariance
 
     def set_objective(self, optimization_data: OptimizationData) -> None:
@@ -223,7 +255,7 @@ class LeastSquares(Optimization):
 class MeanVariance(Optimization):
 
     def __init__(self,
-                 constraints: Constraints,
+                 constraints: Optional[Constraints] = None,
                  covariance: Optional[Covariance] = None,
                  expected_return: Optional[ExpectedReturn] = None,
                  risk_aversion: float = 1,
@@ -248,3 +280,109 @@ class MeanVariance(Optimization):
 
     def solve(self) -> None:
         return super().solve()
+
+
+
+class MinVariance(Optimization):
+    def __init__(self, constraints: Constraints, covariance: Optional[Covariance] = None, **kwargs):
+        super().__init__(constraints=constraints, **kwargs)
+        self.covariance = Covariance() if covariance is None else covariance
+
+    def set_objective(self, optimization_data: OptimizationData) -> None:
+        X = optimization_data['return_series']
+        covmat = self.covariance.estimate(X=X, inplace=False)
+        self.objective = Objective(
+            P=covmat * 2,  # Standard min-variance objective
+            q=np.zeros(covmat.shape[0])
+        )
+        return None
+
+    def solve(self) -> None:
+        return super().solve()
+
+
+
+class MaxReturn(Optimization):
+    def __init__(self, constraints: Constraints, expected_return: Optional[ExpectedReturn] = None, **kwargs):
+        super().__init__(constraints=constraints, **kwargs)
+        self.expected_return = ExpectedReturn() if expected_return is None else expected_return
+
+    def set_objective(self, optimization_data: OptimizationData) -> None:
+        X = optimization_data['return_series']
+        mu = self.expected_return.estimate(X=X, inplace=False)
+        self.objective = Objective(
+            q=-mu,  # Maximizing return means minimizing -mu
+            P=np.zeros((mu.shape[0], mu.shape[0]))
+        )
+        return None
+
+    def solve(self) -> None:
+        return super().solve()
+
+
+
+class MaxSharpe(Optimization):
+    def __init__(self, constraints: Constraints, covariance: Optional[Covariance] = None,
+                 expected_return: Optional[ExpectedReturn] = None, **kwargs):
+        super().__init__(constraints=constraints, **kwargs)
+        self.covariance = Covariance() if covariance is None else covariance
+        self.expected_return = ExpectedReturn() if expected_return is None else expected_return
+
+    def set_objective(self, optimization_data: OptimizationData) -> None:
+        X = optimization_data['return_series']
+        covmat = self.covariance.estimate(X=X, inplace=False)
+        mu = self.expected_return.estimate(X=X, inplace=False)
+        inv_vol = np.linalg.inv(np.sqrt(np.diag(np.diag(covmat))))
+        sharpe_weights = inv_vol @ mu
+        self.objective = Objective(
+            q=-sharpe_weights,
+            P=np.zeros((mu.shape[0], mu.shape[0]))
+        )
+        return None
+
+    def solve(self) -> None:
+        return super().solve()
+
+
+
+class MaxUtility(Optimization):
+    def __init__(self, constraints: Constraints, covariance: Optional[Covariance] = None,
+                 expected_return: Optional[ExpectedReturn] = None, risk_aversion: float = 1, **kwargs):
+        super().__init__(constraints=constraints, risk_aversion=risk_aversion, **kwargs)
+        self.covariance = Covariance() if covariance is None else covariance
+        self.expected_return = ExpectedReturn() if expected_return is None else expected_return
+
+    def set_objective(self, optimization_data: OptimizationData) -> None:
+        X = optimization_data['return_series']
+        covmat = self.covariance.estimate(X=X, inplace=False)
+        mu = self.expected_return.estimate(X=X, inplace=False)
+        self.objective = Objective(
+            q=-mu,  # Maximizing utility (expected return minus risk penalty)
+            P=covmat * 2 * self.params['risk_aversion']
+        )
+        return None
+
+    def solve(self) -> None:
+        return super().solve()
+
+
+
+class RiskParity(Optimization):
+    def __init__(self, constraints: Constraints, covariance: Optional[Covariance] = None, **kwargs):
+        super().__init__(constraints=constraints, **kwargs)
+        self.covariance = Covariance() if covariance is None else covariance
+
+    def set_objective(self, optimization_data: OptimizationData) -> None:
+        X = optimization_data['return_series']
+        covmat = self.covariance.estimate(X=X, inplace=False)
+        inv_risk = 1 / np.sqrt(np.diag(covmat))
+        risk_parity_weights = inv_risk / np.sum(inv_risk)
+        self.objective = Objective(
+            q=-risk_parity_weights,
+            P=np.zeros((covmat.shape[0], covmat.shape[0]))
+        )
+        return None
+
+    def solve(self) -> None:
+        return super().solve()
+

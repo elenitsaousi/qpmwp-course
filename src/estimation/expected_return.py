@@ -28,10 +28,6 @@ import pandas as pd
 #       [ ] mean_ewma (exponential weighted)
 
 
-
-
-
-
 class ExpectedReturnSpecification(dict):
 
     def __init__(self,
@@ -125,3 +121,19 @@ def mean_arithmetic(X: Union[pd.DataFrame, np.ndarray],
 
     mu = X.mean(axis=0) * scalefactor
     return mu
+
+def mean_harmonic(X: Union[pd.DataFrame, np.ndarray],
+                  scalefactor: Union[float, int] = 1) -> Union[pd.Series, np.ndarray]:
+    """
+    Compute the harmonic mean return.
+    """
+    return scalefactor / np.mean(1 / (X + 1), axis=0) - 1
+
+
+def mean_ewma(X: Union[pd.DataFrame, np.ndarray],
+              scalefactor: Union[float, int] = 1,
+              span: int = 30) -> Union[pd.Series, np.ndarray]:
+    """
+    Compute the exponentially weighted moving average (EWMA) mean return.
+    """
+    return X.ewm(span=span, adjust=False).mean().iloc[-1] * scalefactor

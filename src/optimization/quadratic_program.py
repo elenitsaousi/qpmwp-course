@@ -115,6 +115,37 @@ class QuadraticProgram():
         '''
         self._results.update(value)
 
+    def linearize_abs_constraints(self, C: np.ndarray, d: np.ndarray, var_count: int):
+        '''
+        Linearize absolute value constraints of the form |C * x + d| <= b
+        by introducing auxiliary variables.
+        '''
+        
+        # Ensure that G and h exist in problem data
+        G = self.problem_data.get('G')
+        h = self.problem_data.get('h')
+
+        if G is None or h is None:
+            G = np.empty((0, var_count))
+            h = np.empty((0,))
+
+        # Number of new auxiliary variables (same as number of constraints)
+        num_constraints = C.shape[0]
+
+        # Extend the G matrix to accommodate the new constraints
+        G_new = np.vstack([
+            np.hstack([C, -np.eye(num_constraints)]),  # C * x - aux <= -d
+            np.hstack([-C, -np.eye(num_constraints)])  # -C * x - aux <= d
+        ])
+        
+        h_new = np.hstack([-d, d])  # Adjusted bounds
+
+        # Update the problem data with the new constraints
+        self.update_problem_data({'G': np.vstack([G, G_new]) if G.size else G_new,
+                                  'h': np.hstack([h, h_new]) if h.size else h_new})
+
+
+
     def solve(self) -> None:
         '''
         Solve the quadratic programming problem using the specified solver.

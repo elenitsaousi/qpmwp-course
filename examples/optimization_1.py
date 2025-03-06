@@ -39,7 +39,8 @@ import matplotlib.pyplot as plt
 
 # Load msci country index return series
 
-path_to_data = '../data/'
+path_to_data = '/Users/elenetsaouse/qpmwp-course-1/data/'  # Full absolute path
+
 # N = 24
 N = 10
 df = pd.read_csv(os.path.join(path_to_data, 'msci_country_indices.csv'),

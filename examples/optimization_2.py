@@ -50,7 +50,8 @@ from src.optimization.optimization import MeanVariance
 # --------------------------------------------------------------------------
 
 N = 10
-data = load_data_msci(path = '../data/', n = N)
+data = load_data_msci(path = '/Users/elenetsaouse/qpmwp-course-1/data/', n = N)
+
 data
 
 

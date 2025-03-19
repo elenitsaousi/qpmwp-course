@@ -145,6 +145,78 @@ class QuadraticProgram():
                                   'h': np.hstack([h, h_new]) if h.size else h_new})
 
 
+##### Assignment 2 
+
+    def linearize_turnover_constraint(self, x_prev: np.ndarray, turnover_limit: float):
+        """
+        Linearize the turnover constraint by introducing auxiliary variables.
+
+        The turnover constraint is:
+            sum(|x_t - x_t-1|) <= turnover_limit
+        
+        This is transformed into linear constraints by introducing auxiliary variables u:
+            -u_i <= x_i - x_prev_i <= u_i  for all i
+            sum(u) <= turnover_limit
+
+        Parameters:
+        -----------
+        x_prev : np.ndarray
+            The portfolio weights from the previous period.
+        turnover_limit : float
+            The maximum allowed turnover.
+        """
+        num_vars = len(x_prev)
+        
+        # Ensure that G and h exist in problem data
+        G = self.problem_data.get('G')
+        h = self.problem_data.get('h')
+        
+        if G is None or h is None:
+            G = np.empty((0, num_vars))
+            h = np.empty((0,))
+        
+        # Auxiliary variables for absolute values
+        num_aux_vars = num_vars
+        
+        # New variables: [x, u] (portfolio weights and auxiliary variables)
+        extended_var_count = num_vars + num_aux_vars
+        
+        # Constraints: -u <= x - x_prev <= u
+        identity = np.eye(num_aux_vars)
+        turnover_constraints = np.vstack([
+            np.hstack([np.eye(num_vars), -identity]),  # x - x_prev <= u
+            np.hstack([-np.eye(num_vars), -identity])  # -x + x_prev <= u
+        ])
+        
+        turnover_bounds = np.hstack([x_prev, -x_prev])
+        
+        # Turnover sum constraint: sum(u) <= turnover_limit
+        turnover_sum_constraint = np.hstack([np.zeros(num_vars), np.ones(num_aux_vars)])
+        turnover_sum_bound = np.array([turnover_limit])
+        
+        # Update problem data
+        self.update_problem_data({
+            'G': np.vstack([G, turnover_constraints, turnover_sum_constraint]) if G.size else np.vstack([turnover_constraints, turnover_sum_constraint]),
+            'h': np.hstack([h, turnover_bounds, turnover_sum_bound]) if h.size else np.hstack([turnover_bounds, turnover_sum_bound])
+        })
+        
+        # Extend lower and upper bounds to include auxiliary variables
+        lb = self.problem_data.get('lb')
+        ub = self.problem_data.get('ub')
+        
+        if lb is None:
+            lb = np.full(extended_var_count, -np.inf)
+        else:
+            lb = np.hstack([lb, np.zeros(num_aux_vars)])  # u >= 0
+        
+        if ub is None:
+            ub = np.full(extended_var_count, np.inf)
+        else:
+            ub = np.hstack([ub, np.full(num_aux_vars, np.inf)])
+        
+        self.update_problem_data({'lb': lb, 'ub': ub})
+
+
 
     def solve(self) -> None:
         '''

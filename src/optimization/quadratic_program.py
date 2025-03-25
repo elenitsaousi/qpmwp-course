@@ -37,16 +37,6 @@ USABLE_SOLVERS = ALL_SOLVERS - IGNORED_SOLVERS
 
 
 
-
-
-
-# TODO:
-# [ ] Add method to linearize absolute value functions (e.g. leverage constraint, turnover constraint)
-
-
-
-
-
 class QuadraticProgram():
 
     def __init__(

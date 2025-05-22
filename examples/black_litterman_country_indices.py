@@ -26,8 +26,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 # Add the project root directory to Python path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-src_path = os.path.join(project_root, 'src')
+project_root = "/Users/elenetsaouse/qpmwp-course"
+sys.path.append("/Users/elenetsaouse/qpmwp-course/qpmwp-course/src")
+   # Change this path if needed
+src_path = os.path.join(project_root, 'qpmwp-course\\src')
 sys.path.append(project_root)
 sys.path.append(src_path)
 
@@ -143,18 +145,19 @@ W.corr()
 
 P = pd.DataFrame(
     data=[
-        [],                    # Absolute view on JP
-        [],                    # Relative view on US vs. others
-        [],                    # Relative view on US vs. JP
+        [0, 1, 0, 0, 0],              # View1: Absolute view on JP
+        [-1, 0.25, 0.25, 0.25, 0.25], # View2: US underperforms average of others
+        [1, -1, 0, 0, 0],             # View3: US outperforms JP
     ],
     index=['View1', 'View2', 'View3'],
     columns=country_names,
 )
 
 q = pd.Series(
-    data=[],
+    data=[0.04 / 252, -0.02, 0.01],
     index=P.index,
 )
+
 
 
 P
@@ -211,6 +214,7 @@ Mu = pd.concat({
 
 Mu
 Mu.plot(kind="bar", figsize=(10, 5))
+plt.show()
 Mu.corr()
 
 
@@ -225,6 +229,7 @@ Mu.corr()
 w_star_post = pd.Series(np.linalg.inv(covmat) @ mu_posterior, index=country_names)
 W = pd.DataFrame([cap_weights, w_star_post], index=["w_prior", "w_posterior"]).T
 W.plot(kind="bar", figsize=(10, 5))
+plt.show()
 W.corr()
 W
 
@@ -254,6 +259,7 @@ w_posterior = pd.Series(mv.results["weights"])
 W = pd.DataFrame([cap_weights, w_star_post, w_posterior],
                  index=["w_prior", "w_posterior_analytical", "w_posterior_numerical"]).T
 W.plot(kind="bar", figsize=(10, 5))
+plt.show()
 W.sum()
 
 

@@ -17,12 +17,44 @@ import pandas as pd
 import xgboost as xgb
 
 
+from backtesting.backtest_item_builder_classes import SelectionItemBuilder
+#from selection.custom_selection import CustomSelectionItemBuilder
+
+
+def build_selection_vol_prof(**kwargs):
+    builder = CustomSelectionItemBuilder()
+    return SelectionItemBuilder(
+        item_name="vol_prof_filter",
+        bibfn=lambda bs, rebdate, **k: builder.build(bs.data.market_data, bs.data.jkp_data)
+    )
 
 
 
 # --------------------------------------------------------------------------
 # Backtest item builder functions (bibfn) - Selection
 # --------------------------------------------------------------------------
+#added
+def bibfn_selection_high_roa(bs, rebdate: str, **kwargs) -> pd.DataFrame:
+    jkp = bs.data.jkp_data
+    filtered = jkp.loc[
+        (jkp.index.get_level_values("date") < rebdate) &
+        (jkp.index.get_level_values("date") >= pd.to_datetime(rebdate) - pd.Timedelta(days=365))
+    ]
+
+    try:
+        roa = filtered['niq_at'].groupby('id').last()
+        binary = (roa > roa.median()).astype(int)
+        if binary.sum() == 0:
+            binary[:] = 1  # fallback
+    except Exception:
+        ids = jkp.index.get_level_values("id").unique()
+        binary = pd.Series(1, index=ids, name='binary')
+        roa = pd.Series(0.0, index=ids, name='scores')
+
+    return pd.DataFrame({'scores': roa, 'binary': binary})
+
+
+
 
 def bibfn_selection_min_volume(bs, rebdate: str, **kwargs) -> pd.DataFrame:
 
@@ -228,42 +260,53 @@ def bibfn_selection_jkp_factor_scores(bs, rebdate: str, **kwargs) -> pd.DataFram
 # --------------------------------------------------------------------------
 
 def bibfn_return_series(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
-
     '''
     Backtest item builder function for return series.
     Prepares an element of bs.optimization_data with
     single stock return series that are used for optimization.
     '''
-
-    # Arguments
     width = kwargs.get('width')
 
-    # Data: get return series
     if hasattr(bs.data, 'get_return_series'):
         return_series = bs.data.get_return_series(
             width=width,
             end_date=rebdate,
-            fillna_value=None,
+            fillna_value=0.0,
         )
+        print(f"[DEBUG] Return series shape on {rebdate}: {return_series.shape}")
     else:
         return_series = bs.data.get('return_series')
         if return_series is None:
             raise ValueError('Return series data is missing.')
 
-    # Selection
-    ids = bs.selection.selected
+    # Ensure column names are strings and check for matching selected IDs
+    selected_ids = [str(i) for i in bs.selection.selected]  # ensure they are strings
+    print("Selected IDs missing:", [i for i in selected_ids if i not in return_series.columns])
+
+    matching_ids = [i for i in selected_ids if i in return_series.columns]
+    print("Matching IDs:", matching_ids)
+
+    # Ensure no NaN values
+    return_series = return_series.fillna(0.0)
+
+    # Filter the return series based on the matching IDs
+    ids = [i for i in bs.selection.selected if i in return_series.columns]
+    print(f"[DEBUG] Matching IDs:", ids)
+
     if len(ids) == 0:
-        ids = return_series.columns
+        print(f"[WARNING] No matching IDs in return series on {rebdate}")
+        bs.optimization_data['return_series'] = None
+        return
 
-    # Subset the return series
     return_series = return_series[return_series.index <= rebdate].tail(width)[ids]
-
-    # Remove weekends
     return_series = return_series[return_series.index.dayofweek < 5]
-
-    # Output
     bs.optimization_data['return_series'] = return_series
+
+
     return None
+
+
+
 
 
 def bibfn_bm_series(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
@@ -283,9 +326,8 @@ def bibfn_bm_series(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
     if hasattr(bs.data, name):
         data = getattr(bs.data, name)
     else:
-        data = bs.data.get(name)
-        if data is None:
-            raise ValueError('Benchmark return series data is missing.')
+        raise AttributeError(f"BacktestData has no attribute '{name}'")
+
 
     # Subset the benchmark series
     bm_series = data[data.index <= rebdate].tail(width)
@@ -293,15 +335,17 @@ def bibfn_bm_series(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
     # Remove weekends
     bm_series = bm_series[bm_series.index.dayofweek < 5]
 
+
     # Append the benchmark series to the optimization data
     bs.optimization_data['bm_series'] = bm_series
 
+    
     # Align the benchmark series to the return series
-    if align:
-        bs.optimization_data.align_dates(
-            variable_names = ['bm_series', 'return_series'],
-            dropna = True
-        )
+    # if align:
+    #     bs.optimization_data.align_dates(
+    #         variable_names = ['bm_series', 'return_series'],
+    #         dropna = True
+    #     )
 
     return None
 
@@ -336,6 +380,8 @@ def bibfn_scores(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
     '''
 
     ids = bs.selection.selected
+
+    print("Available filters in selection.filtered:", bs.selection.filtered.keys())
     scores = bs.selection.filtered['scores'].loc[ids]
     # Drop the 'binary' column
     bs.optimization_data['scores'] = scores.drop(columns=['binary'])
@@ -409,37 +455,70 @@ def bibfn_scores_ltr(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
 # Backtest item builder functions - Optimization constraints
 # --------------------------------------------------------------------------
 
-def bibfn_budget_constraint(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
+def bibfn_budget_constraint(bs, rebdate):
+    selected = bs.selection.selected
+    if not selected:
+        print(f"[DEBUG] No assets selected on {rebdate}")
+        return {"A": pd.DataFrame(), "b": pd.Series(dtype=float), "G": pd.DataFrame(), "h": pd.Series(dtype=float)}
 
-    '''
-    Backtest item builder function for setting the budget constraint.
-    '''
+    try:
+        optimizer_universe = bs.optimization.get_optimizer_universe()
+    except AttributeError:
+        print(f"[ERROR] Could not find correct optimizer universe for {rebdate}")
+        return {"A": pd.DataFrame(), "b": pd.Series(dtype=float), "G": pd.DataFrame(), "h": pd.Series(dtype=float)}
 
-    # Arguments
-    budget = kwargs.get('budget', 1)
+    a_row = pd.Series(1.0, index=selected)
+    a_row_full = a_row.reindex(optimizer_universe).fillna(0.0)
 
-    # Add constraint
-    bs.optimization.constraints.add_budget(rhs = budget, sense = '=')
-    return None
+    A = pd.DataFrame([a_row_full], index=["budget"])
+    b = pd.Series([1.0], index=["budget"])
+
+    print(f"[DEBUG] Returning budget constraint: A.shape = {A.shape}, b.shape = {b.shape}")
+    return {"A": A, "b": b}
 
 
-def bibfn_box_constraints(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
 
-    '''
-    Backtest item builder function for setting the box constraints.
-    '''
 
-    # Arguments
-    lower = kwargs.get('lower', 0)
-    upper = kwargs.get('upper', 1)
-    box_type = kwargs.get('box_type', 'LongOnly')
 
-    # Constraints
-    bs.optimization.constraints.add_box(box_type = box_type,
-                                        lower = lower,
-                                        upper = upper)
-    return None
 
+
+
+
+
+def bibfn_box_constraints(bs, rebdate, **kwargs):
+    print(f"[DEBUG] Running box constraints on {rebdate}")
+    selected = bs.selection.selected
+    if not selected:
+        print(f"[DEBUG] No assets selected on {rebdate}")
+        return {}
+
+    n = len(selected)
+    lower = kwargs.get("lower", 0.0)
+    upper = kwargs.get("upper", 1.0)
+
+    G = np.vstack([-np.eye(n), np.eye(n)])
+    h = np.hstack([-np.full(n, lower), np.full(n, upper)])
+
+    G_df = pd.DataFrame(G, columns=selected)
+    h_ser = pd.Series(h, index=[f"ub{i}" for i in range(len(h))])
+
+    print(f"[DEBUG] Returning box constraint: G.shape = {G_df.shape}, h.shape = {h_ser.shape}")
+    return {"G": G_df, "h": h_ser}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from backtesting.backtest_service import BacktestService
 
 def bibfn_size_dependent_upper_bounds(bs: 'BacktestService', rebdate: str, **kwargs) -> None:
 
@@ -506,5 +585,58 @@ def bibfn_turnover_constraint(bs, rebdate: str, **kwargs) -> None:
             rhs = turnover_limit,
             x0 = bs.optimization.params['x_init'],
         )
+
+    return None
+
+from data.build_features import build_features
+def bibfn_predicted_returns(bs, rebdate, **kwargs):
+    import joblib
+    import pandas as pd
+    import numpy as np
+
+    model_path = kwargs.get("model_path", "/Users/elenetsaouse/qpmwp-course/qpmwp-course/output/ml_model.joblib")
+    model = joblib.load(model_path)
+
+    jkp = bs.data.jkp_data.copy().reset_index()
+    current_date = pd.to_datetime(rebdate)
+
+    available_dates = jkp[jkp["date"] <= current_date]["date"]
+    if available_dates.empty:
+        raise ValueError(f"No jkp data available before or on {current_date}")
+    latest_date = available_dates.max()
+
+    market = bs.data.market_data.reset_index()
+    market = market.sort_values(by=["id", "date"])
+    market["momentum_1m"] = market.groupby("id")["price"].pct_change(21)
+    market["vol_21d"] = market.groupby("id")["price"].pct_change().groupby(market["id"]).transform(lambda x: x.rolling(21).std())
+    market["liq_rank"] = market.groupby("date")["liquidity"].rank(pct=True)
+
+    market_features = market[market["date"] == latest_date][["id", "liq_rank", "momentum_1m", "vol_21d"]]
+    df = jkp[jkp["date"] == latest_date].copy()
+    df = pd.merge(df, market_features, on="id", how="left")
+
+    # Filter to selected IDs first
+    selected_ids = bs.selection.selected
+    df = df[df["id"].isin(selected_ids)].copy()
+    df.set_index("id", inplace=True)
+
+    # Ensure all columns are strings
+    df.columns = df.columns.astype(str)
+
+    # Retrieve required features
+    required_features = model.feature_names_in_
+    for col in required_features:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    X = df[required_features].fillna(0.0).astype(np.float64)
+
+    # Predict
+    preds = model.predict(X)
+    pred_series = pd.Series(preds, index=X.index)
+
+    # Store in optimization data
+    bs.optimization_data["scores"] = pred_series
+    bs.optimization_data["features"] = X
 
     return None

@@ -12,13 +12,16 @@
 
 # Standard library imports
 from typing import Optional
+import sys, os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+
 
 # Third party imports
 import numpy as np
 import pandas as pd
 
 # Local modules imports
-from optimization.optimization import (
+from optimization.optimization_base import (
     Optimization,
     EmptyOptimization,
 )
@@ -31,9 +34,6 @@ from backtesting.backtest_item_builder_classes import (
     SelectionItemBuilder,
     OptimizationItemBuilder,
 )
-
-
-
 
 class BacktestService():
     """
@@ -215,6 +215,14 @@ class BacktestService():
 
         # Loop over the optimization_item_builders
         for item_builder in self.optimization_item_builders.values():
-            item_builder(self, rebdate)
+            result = item_builder(self, rebdate)
+            
+            if item_builder.has_constraint_matrix and result:
+                G = result.get("G")
+                h = result.get("h")
+                if G is not None and h is not None:
+                    self.optimization.constraints.add_inequality(G=G, h=h)
 
         return None
+
+

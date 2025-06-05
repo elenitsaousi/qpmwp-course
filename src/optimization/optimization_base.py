@@ -169,6 +169,9 @@ class Optimization(ABC):
         lb = constraints.box['lower'].to_numpy() if constraints.box['box_type'] != 'NA' else None
         ub = constraints.box['upper'].to_numpy() if constraints.box['box_type'] != 'NA' else None
 
+        G = np.zeros((0, len(q))) if G.empty else G
+        h = np.zeros((0,)) if h.empty else h
+
         # Create the optimization model as a QuadraticProgram
         self.model = QuadraticProgram(
             P=self.objective.coefficients['P'],
@@ -528,39 +531,6 @@ class RiskParity(Optimization):
         )
         return None
 
-    def solve(self) -> None:
-        return super().solve()
-        if self.params.get('solver_name') == 'analytical':
-            GhAb = self.constraints.to_GhAb()
-            if GhAb['G'] is not None:
-                raise ValueError(
-                    'Analytical solution does not exist whith inequality constraints.'
-                )
-            A = GhAb['A']
-            b = GhAb['b']
-            # If b is scalar, convert it to a 1D array
-            if isinstance(b, (int, float)):
-                b = np.array([b])
-            elif b.ndim == 0:
-                b = np.array([b])
-
-            P = self.objective.coefficients['P']
-            P_inv = np.linalg.inv(P)
-
-            AP_invA = A @ P_inv @ A.T
-            if AP_invA.shape[0] > 1:
-                AP_invA_inv = np.linalg.inv(AP_invA)
-            else:
-                AP_invA_inv = 1 / AP_invA
-            x = pd.Series(P_inv @ A.T @ AP_invA_inv @ b,
-                          index=self.constraints.ids)      
-            self.results.update({
-                'weights': x.to_dict(),
-                'status': True,
-            })
-            return None
-        else:
-            return super().solve()
 
 
 class ScoreVariance(Optimization):
@@ -607,4 +577,34 @@ class ScoreVariance(Optimization):
         return None
 
     def solve(self) -> None:
-        return super().solve()
+        if self.params.get('solver_name') == 'analytical':
+            GhAb = self.constraints.to_GhAb()
+            if GhAb['G'] is not None:
+                raise ValueError(
+                    'Analytical solution does not exist with inequality constraints.'
+                )
+            A = GhAb['A']
+            b = GhAb['b']
+
+            if isinstance(b, (int, float)):
+                b = np.array([b])
+            elif b.ndim == 0:
+                b = np.array([b])
+
+            P = self.objective.coefficients['P']
+            P_inv = np.linalg.inv(P)
+
+            AP_invA = A @ P_inv @ A.T
+            AP_invA_inv = np.linalg.inv(AP_invA) if AP_invA.shape[0] > 1 else 1 / AP_invA
+
+            x = pd.Series(P_inv @ A.T @ AP_invA_inv @ b, index=self.constraints.ids)
+            self.results.update({
+                'weights': x.to_dict(),
+                'status': True,
+            })
+        else:
+            super().solve()
+
+        return None
+
+        

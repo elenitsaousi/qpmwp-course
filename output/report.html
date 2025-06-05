@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Swiss Equity Strategy Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+        h1, h2 { color: #2c3e50; }
+        ul { margin-top: 0; }
+        code { background: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<h1>Swiss Equity Strategy Report</h1>
+
+<h2>High-Level Strategy Overview</h2>
+<p>
+    The investment strategy I developed is a <strong>data-driven, ML-augmented long-only strategy</strong> tailored to the Swiss equity market.
+    Its core idea is simple: instead of manually selecting stocks based on heuristics or static rules, I use <strong>machine learning to predict which stocks are likely to perform better next month</strong> and then systematically allocate capital toward those opportunities.
+</p>
+
+<p>
+    Here's how it works: I trained a <strong>gradient boosting regression model (XGBoost)</strong> to predict each stock’s <code>fwd_1m_ret</code>, i.e., the forward one-month return. The features for this model come from <code>jkp_data</code>, which contains rich firm-level accounting ratios related to quality, profitability, investment, and value, as well as momentum and volatility indicators. These features were combined with price and return data from <code>market_data</code> to ensure both forward-looking and recent historical signals were captured.
+</p>
+
+<p>
+    Once the model outputs a return prediction for each stock, those values are treated as <strong>scores</strong>. The strategy then selects a subset of stocks based on profitability and constructs an <strong>optimized portfolio</strong> using a custom-built <code>ScoreMaximizer</code> optimizer. This optimizer solves a <strong>linear program</strong> that tries to maximize total expected return under realistic constraints:
+</p>
+
+<ul>
+    <li><strong>Budget constraint:</strong> Fully invested, i.e., sum of weights = 1</li>
+    <li><strong>Box constraint:</strong> No stock gets more than 30% allocation</li>
+</ul>
+
+<p>
+    If the optimizer fails to find a feasible solution due to constraint misalignment, it automatically falls back to a relaxed version (e.g., allowing 0–100% weights). This ensures the strategy never skips a rebalancing date without trying alternatives.
+</p>
+
+<p>
+    Finally, I backtested the strategy on a monthly frequency. At each rebalancing point, the portfolio is updated with new predictions and weights. The simulation incorporates <strong>transaction costs (0.2%)</strong> and an annual <strong>fixed cost (1%)</strong> to reflect real-world frictions. Results are benchmarked against the SPI Index to evaluate performance.
+</p>
+
+<h2>Detailed Explanation of Backtesting Steps</h2>
+<ul>
+    <li><strong>Main Pipeline (<code>run_backtest.py</code>):</strong>
+        <ul>
+            <li>This is the main script where everything ties together. It initializes the data, selection logic, ML-based optimization, and orchestrates the walk-forward simulation for monthly portfolio rebalancing.</li>
+            <li>Each month, the script prepares a new investment universe, computes predictions, applies constraints, solves the optimization, calculates returns after costs, and records the results.</li>
+            <li>It also includes robust error handling to skip problematic dates and logs failures in <code>failed_dates.csv</code> (only 6 dates failed in total).</li>
+        </ul>
+    </li>
+
+    <li><strong>Machine Learning Preparation:</strong>
+        <ul>
+            <li><code>ml_dataset_builder.py</code> and <code>build_features.py</code> were used to construct a supervised learning dataset, combining return targets with 156 firm-level features from JKP data (e.g., quality, momentum, volatility metrics).</li>
+            <li>The target variable was 1-month forward return (<code>fwd_1m_ret</code>), computed from <code>market_data.parquet</code>. Features and targets were matched and aligned on stock ID and date.</li>
+            <li>Extreme outliers in the target were removed (returns outside ±3 standard deviations).</li>
+        </ul>
+    </li>
+
+    <li><strong>ML Model Training (<code>ml_model_training.py</code>):</strong>
+    <ul>
+        <li>I used a <strong>gradient boosting regression model (XGBoost)</strong> to predict forward 1-month returns based on accounting and technical features.</li>
+        <li>The training set was split into training/testing folds. Grid search was used to tune hyperparameters over 48 combinations with 5-fold cross-validation (total of 240 fits).</li>
+        <li>Best model parameters: <code>{'colsample_bytree': 0.7, 'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 200, 'subsample': 1.0}</code></li>
+        <li>Performance metrics on test set:
+            <ul>
+                <li>MSE = <code>0.004726</code></li>
+                <li>MAE = <code>0.053280</code></li>
+                <li>R² = <code>0.0653</code></li>
+            </ul>
+        </li>
+        <li>
+            Although the R² value may seem low at first glance, this is common in financial prediction tasks such as 1-month stock returns, which are known to be highly noisy and difficult to model.
+            In this context, even a small R² can be economically meaningful and usable for portfolio optimization, as it captures subtle but actionable predictive signals.
+        </li>
+        <li>The model was saved to <code>output/ml_model.joblib</code> and loaded dynamically during the backtest.</li>
+    </ul>
+</li>
+
+    <li><strong>Selection:</strong>
+        <ul>
+            <li>The <code>SelectionItemBuilder</code> class was used to define a stock selection rule based on return on assets (ROA).</li>
+            <li>Specifically, <code>bibfn_selection_high_roa</code> was applied to filter stocks with high operating profitability, reducing noise from poor-quality firms and shrinking the optimizer’s universe.</li>
+        </ul>
+    </li>
+
+    <li><strong>Optimization Logic:</strong>
+        <ul>
+            <li>I created a custom optimizer class <code>ScoreMaximizer</code> extending the base <code>Optimization</code> class provided in <code>optimization_base.py</code>.</li>
+            <li>This class loads the ML model, predicts expected returns for each selected stock, and sets these as the coefficients (<code>mu</code>) in the linear program.</li>
+            <li>The optimizer solves: <code>max mu^T x</code> subject to:
+                <ul>
+                    <li><code>sum(x) = 1</code> (budget constraint)</li>
+                    <li><code>0 ≤ x_i ≤ 0.3</code> (max allocation per stock)</li>
+                </ul>
+            </li>
+            <li>If constraints fail due to shape mismatch, it uses fallback logic with relaxed constraints to ensure continuity in the backtest.</li>
+        </ul>
+    </li>
+
+    <li><strong>Backtest Execution:</strong>
+        <ul>
+            <li>The <code>BacktestService</code> class handled the month-by-month simulation. It encapsulates logic for preparing inputs, running selection/optimization, computing turnover, and applying fixed and variable costs.</li>
+            <li>Each rebalancing period uses the most recent available data to avoid lookahead bias. Turnover is tracked to deduct transaction costs (0.2%), while a fixed annual fee (1%) is charged monthly.</li>
+        </ul>
+    </li>
+
+    <li><strong>Other Custom Modules:</strong>
+        <ul>
+            <li><code>simulate_portfolio.py</code>: Used during testing to manually simulate portfolio evolution outside the full backtest loop.</li>
+            <li><code>results.py</code>: A lightweight class to format optimization results in a standard structure.</li>
+            <li><code>custom_selection.py</code>: Used for experimenting with alternative stock selection logic (e.g., low volatility or size filters).</li>
+        </ul>
+    </li>
+
+    <li><strong>Output Files:</strong>
+        <ul>
+            <li><code>portfolio_weights.csv</code>: Each row contains the portfolio weights for a specific month (across all selected assets).</li>
+            <li><code>portfolio_returns.csv</code>: Net monthly returns after applying all costs, ready to use for performance analysis.</li>
+            <li><code>failed_dates.csv</code>: Logs rebalancing dates that failed due to missing data or infeasible optimization. Only 6 such cases were observed.</li>
+        </ul>
+    </li>
+</ul>
+
+
+</body>
+</html>

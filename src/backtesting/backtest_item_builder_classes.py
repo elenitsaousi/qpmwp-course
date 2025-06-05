@@ -81,22 +81,44 @@ class OptimizationItemBuilder(BacktestItemBuilder):
     Callable Class for building optimization data items in a backtest.
     '''
 
+    def __init__(self, has_constraint_matrix: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self.has_constraint_matrix = has_constraint_matrix
+
     def __call__(self, bs, rebdate: str) -> None:
-
-        '''
-        Build optimization data item from a custom function.
-
-        :param bs: The backtest service.
-        :param rebdate: The rebalance date.
-        :raises ValueError: If 'bibfn' is not defined or not callable.
-        '''
-
         optimization_item_builder_fn = self.arguments.get('bibfn')
         if optimization_item_builder_fn is None or not callable(optimization_item_builder_fn):
             raise ValueError('bibfn is not defined or not callable.')
 
-        # Call the backtest item builder function. Notice that the function returns None,
-        # it modifies the backtest service in place.
-        optimization_item_builder_fn(bs = bs, rebdate = rebdate, **self.arguments)
+        # Filter out 'bibfn' from the arguments
+        filtered_args = {k: v for k, v in self.arguments.items() if k != 'bibfn'}
+
+        result = optimization_item_builder_fn(bs=bs, rebdate=rebdate, **filtered_args)
+
+        # --- FIX START ---
+        if isinstance(result, tuple):
+            print(f"[DEBUG] bibfn returned tuple: {type(result)}, unpacking...")
+            result = result[0]  # or handle accordingly if your function returns (dict, something_else)
+        # --- FIX END ---
+
+        if self.has_constraint_matrix:
+            if not isinstance(result, dict):
+                raise TypeError(f"[ERROR] Expected dict from bibfn, but got {type(result)}")
+
+            A, b = result.get("A"), result.get("b")
+            G, h = result.get("G"), result.get("h")
+            if A is not None and b is not None:
+                print(f"[DEBUG] Injecting constraint matrix A: A.shape = {A.shape}, b.shape = {b.shape}")
+                bs.optimization.constraints.add_matrix(A=A, b=b)
+            if G is not None and h is not None:
+                print(f"[DEBUG] Injecting box constraint G: G.shape = {G.shape}, h.shape = {h.shape}")
+                bs.optimization.constraints.add_matrix(G=G, h=h)
+
+        else:
+            item_name = self.arguments.get('item_name')
+            if result is not None and item_name is not None:
+                bs.optimization_data[item_name] = result
+
         return None
+
     
